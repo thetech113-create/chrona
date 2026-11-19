@@ -26,6 +26,8 @@ import android.provider.Settings
 import android.util.Log
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.vaishnava.alarm.logging.RemoteLogUploader
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -6588,6 +6590,44 @@ fun DeviceForensicsDialog(
                         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(if (currentDownloadState is AppUpdateManager.DownloadState.Checking) "Checking..." else "Check for Updates")
+                    }
+                }
+                ForensicSection("Remote Logs") {
+                    var tokenInput by remember { mutableStateOf(RemoteLogUploader.token(context)) }
+                    val savedStatus = remember { RemoteLogUploader.lastStatus(context) }
+                    val uploadStatus by RemoteLogUploader.status.collectAsState()
+                    Text(
+                        text = "Logs go to the private GitHub repo ${RemoteLogUploader.REPOSITORY} every 15 min and after each alarm, passwords hidden.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    OutlinedTextField(
+                        value = tokenInput,
+                        onValueChange = { tokenInput = it },
+                        label = { Text("GitHub token") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                RemoteLogUploader.saveToken(context, tokenInput)
+                                Toast.makeText(context, "Token saved", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Save Token") }
+                        OutlinedButton(
+                            onClick = { RemoteLogUploader.uploadSoon(context, "manual") },
+                            enabled = tokenInput.isNotBlank(),
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Upload Now") }
+                    }
+                    uploadStatus.ifEmpty { savedStatus }.takeIf { it.isNotEmpty() }?.let {
+                        Text(text = it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
                 ForensicSection("Device") {

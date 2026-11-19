@@ -1728,6 +1728,8 @@ class AlarmForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        // The alarm has stopped: send its log lines now (background thread, see RemoteLogUploader).
+        try { com.vaishnava.alarm.logging.RemoteLogUploader.uploadSoon(applicationContext, "after_alarm") } catch (_: Exception) {}
         try { unregisterReceiver(duckReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(resumeReceiver) } catch (_: Exception) {}
         try { unlockReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}

@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.util.Log
 import android.view.WindowManager
 import com.vaishnava.alarm.data.AlarmRepository
+import com.vaishnava.alarm.logging.AppLogRecorder
+import com.vaishnava.alarm.logging.RemoteLogUploader
 import com.vaishnava.alarm.sequencer.MissionQueueStore
 import java.io.File
 
@@ -55,6 +57,18 @@ class AlarmApplication : Application() {
         enforceStateSchemaIntegrity(this)
         setForceRestartFlag()
         createDummyIntegrityCheckFile()
+        startRemoteLogs()
+    }
+
+    /** Keeps Chrona's own logcat lines in a file and uploads all logs every 15 min (RemoteLogUploader). */
+    private fun startRemoteLogs() {
+        try {
+            val dpsContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) createDeviceProtectedStorageContext() else this
+            AppLogRecorder.start(this, dpsContext)
+            RemoteLogUploader.start(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start remote logs: ${e.message}")
+        }
     }
 
     private fun enforceStateSchemaIntegrity(context: Context) {
