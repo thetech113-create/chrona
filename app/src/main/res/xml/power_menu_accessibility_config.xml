@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- packageNames: only System UI (power menu, notification shade) - the service never needs to
+     see other apps, and banking apps refuse to run alongside a service that watches every app.
+     No screen reading (canRetrieveWindowContent stays off). -->
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:packageNames="com.android.systemui"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:description="@string/power_menu_prevention_description"
+    android:notificationTimeout="100" />

@@ -1,0 +1,33 @@
+.gradle/
+build/
+*.apk
+*.aab
+
+# Local machine / IDE
+.gradle-local/
+.kotlin/
+.idea/
+.claude/
+local.properties
+
+# Secrets: signing keystore and Google credentials never go in the public repo
+/chrona
+*.jks
+*.keystore
+*.p12
+google-services.json
+client_secret_*.json
+
+# Crash dumps, scratch files and old copies
+hs_err_pid*.log
+replay_pid*.log
+/h --force
+/temp.txt
+/app.zip
+*.zip
+/Downloads/
+/backups/
+testsprite_tests/tmp/
+*.backup
+*.forensic_backup
+*.github

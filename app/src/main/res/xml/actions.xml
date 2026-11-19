@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<actions>
+    <!-- Basic alarm action for Google Assistant / Gemini -->
+    <capability name="android.intent.action.SET_ALARM">
+        <intent name="android.intent.action.SET_ALARM">
+            <parameter name="hours" key="alarm_hours" />
+            <parameter name="minutes" key="alarm_minutes" />
+            <parameter name="label" key="alarm_label" />
+            <fulfillment urlTemplate="chrona://setAlarm{?alarm_hours,alarm_minutes,alarm_label}">
+                <parameter-mapping intentParameter="hours" urlParameter="alarm_hours" />
+                <parameter-mapping intentParameter="minutes" urlParameter="alarm_minutes" />
+                <parameter-mapping intentParameter="label" urlParameter="alarm_label" />
+            </fulfillment>
+        </intent>
+    </capability>
+
+    <!-- Custom mission-based alarm -->
+    <capability
+        name="com.vaishnava.alarm.actions.CREATE_ALARM_WITH_MISSION">
+        <intent
+            name="com.vaishnava.alarm.actions.CREATE_ALARM_WITH_MISSION">
+
+            <parameter name="hour" key="hour" />
+            <parameter name="minute" key="minute" />
+
+            <parameter name="missionType" key="missionType">
+                <entity-set-reference entitySetId="MissionTypeEntitySet" />
+            </parameter>
+
+            <fulfillment urlTemplate="chrona://createAlarmWithMission{?hour,minute,missionType}">
+                <parameter-mapping
+                    intentParameter="hour"
+                    urlParameter="hour" />
+                <parameter-mapping
+                    intentParameter="minute"
+                    urlParameter="minute" />
+                <parameter-mapping
+                    intentParameter="missionType"
+                    urlParameter="missionType" />
+            </fulfillment>
+
+            <parameter-elicitation name="missionType">
+                <prompt-template>Which mission do you want — math, tap, password, or sequencer?</prompt-template>
+            </parameter-elicitation>
+
+        </intent>
+    </capability>
+
+    <entity-set entitySetId="MissionTypeEntitySet">
+        <entity name="math"
+            alternateName="@array/mission_math_synonyms"
+            identifier="math" />
+        <entity name="tap"
+            alternateName="@array/mission_tap_synonyms"
+            identifier="tap" />
+        <entity name="password"
+            alternateName="@array/mission_password_synonyms"
+            identifier="password" />
+        <entity name="sequencer"
+            alternateName="@array/mission_sequencer_synonyms"
+            identifier="sequencer" />
+    </entity-set>
+</actions>

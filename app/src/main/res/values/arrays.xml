@@ -1,0 +1,19 @@
+<resources>
+    <string-array name="mission_math_synonyms">
+        <item>math problem</item>
+        <item>math challenge</item>
+        <item>maths mission</item>
+    </string-array>
+    <string-array name="mission_tap_synonyms">
+        <item>tap challenge</item>
+        <item>tapping mission</item>
+    </string-array>
+    <string-array name="mission_password_synonyms">
+        <item>password mission</item>
+        <item>type password</item>
+    </string-array>
+    <string-array name="mission_sequencer_synonyms">
+        <item>sequencer mission</item>
+        <item>pattern mission</item>
+    </string-array>
+</resources>
