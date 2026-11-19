@@ -3879,6 +3879,19 @@ fun AddAlarmDialog(
     LaunchedEffect(displayHour, isPm.value) { syncHourInput() }
     LaunchedEffect(timeMinute.value) { syncMinuteInput() }
 
+    // A dialog, not a toast: Android 12+ cuts a toast off after two lines, and this text must show in full.
+    val showSilenceRefused = remember { mutableStateOf(false) }
+    if (showSilenceRefused.value) {
+        AlertDialog(
+            onDismissRequest = { showSilenceRefused.value = false },
+            title = { Text("Silence not allowed") },
+            text = { Text(SILENCE_NOT_ALLOWED_MESSAGE) },
+            confirmButton = {
+                TextButton(onClick = { showSilenceRefused.value = false }) { Text("OK") }
+            }
+        )
+    }
+
     val performSaveAction: () -> Unit = save@{
         // Silence No Sound only for a one-time test alarm within 10 minutes (SilenceRingtoneRule.kt).
         val silenceChosen = isSilenceRingtone(selectedRingtoneUriState.value?.toString(), R.raw.silence_no_sound)
@@ -3887,7 +3900,7 @@ fun AddAlarmDialog(
                 selectedDatesState.value, isShiftRotation.value, System.currentTimeMillis()
             )
         ) {
-            Toast.makeText(context, SILENCE_NOT_ALLOWED_MESSAGE, Toast.LENGTH_LONG).show()
+            showSilenceRefused.value = true
             return@save
         }
         if (isShiftRotation.value) {
