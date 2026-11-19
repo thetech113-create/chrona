@@ -10,16 +10,8 @@ enum class MatchAction {
 enum class MatchDecision {
     ALLOWED,
     DENIED,
-    UNCERTAIN,
-    SPOOF_DENIED,
-    NOT_ENROLLED
+    UNCERTAIN
 }
-
-data class VerificationResult(
-    val decision: MatchDecision,
-    val similarityScore: Float,
-    val message: String
-)
 
 object FaceMatcher {
     // Calibrated MobileFaceNet thresholds for mobile front camera face crops:
@@ -46,58 +38,26 @@ object FaceMatcher {
         return (dot / denominator).coerceIn(-1.0f, 1.0f)
     }
 
-    fun verify(
-        enrolledEmbedding: FloatArray?,
-        capturedEmbedding: FloatArray?,
-        livenessPassed: Boolean,
-        action: MatchAction
-    ): VerificationResult {
-        if (enrolledEmbedding == null) {
-            return VerificationResult(
-                decision = MatchDecision.NOT_ENROLLED,
-                similarityScore = 0f,
-                message = "No face enrolled. Please enroll your face first."
-            )
-        }
-
-        if (capturedEmbedding == null) {
-            return VerificationResult(
-                decision = MatchDecision.DENIED,
-                similarityScore = 0f,
-                message = "Failed to capture face embedding."
-            )
-        }
-
-        if (!livenessPassed) {
-            return VerificationResult(
-                decision = MatchDecision.SPOOF_DENIED,
-                similarityScore = 0f,
-                message = "Please look at the camera and blink. Try again."
-            )
-        }
-
-        val score = calculateCosineSimilarity(enrolledEmbedding, capturedEmbedding)
-        val requiredThreshold = when (action) {
+    /**
+     * Decides from several good frames instead of one (one frame can be unlucky either way): null while more frames
+     * are needed. From 3 frames on, the mean of the best two must reach the action's threshold; if no frame comes
+     * near the face, or 5 frames still do not settle it, the attempt ends.
+     */
+    fun decide(scores: List<Float>, action: MatchAction): MatchDecision? {
+        if (scores.size < MIN_FRAMES) return null
+        val threshold = when (action) {
             MatchAction.CREATE_OR_EDIT -> MATCH_THRESHOLD_CREATE_EDIT
             MatchAction.DELETE -> MATCH_THRESHOLD_DELETE
         }
-
+        val bestTwo = scores.sortedDescending().take(2).average().toFloat()
         return when {
-            score >= requiredThreshold -> VerificationResult(
-                decision = MatchDecision.ALLOWED,
-                similarityScore = score,
-                message = "Face verified ✓"
-            )
-            score < NON_MATCH_THRESHOLD -> VerificationResult(
-                decision = MatchDecision.DENIED,
-                similarityScore = score,
-                message = "This face doesn't match. Try again."
-            )
-            else -> VerificationResult(
-                decision = MatchDecision.UNCERTAIN,
-                similarityScore = score,
-                message = "Try again in better lighting"
-            )
+            bestTwo >= threshold -> MatchDecision.ALLOWED
+            scores.max() < NON_MATCH_THRESHOLD -> MatchDecision.DENIED
+            scores.size >= MAX_FRAMES -> if (bestTwo < NON_MATCH_THRESHOLD) MatchDecision.DENIED else MatchDecision.UNCERTAIN
+            else -> null
         }
     }
+
+    private const val MIN_FRAMES = 3
+    private const val MAX_FRAMES = 5
 }

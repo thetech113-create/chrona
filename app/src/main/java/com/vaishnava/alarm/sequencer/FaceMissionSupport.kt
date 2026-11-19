@@ -86,6 +86,15 @@ object FaceMissionSupport {
         }
     }
 
+    /** Replaces this alarm's mission face (an old face upgraded to the aligned format after it matched). */
+    fun saveMissionEmbedding(context: Context, alarmId: Int, embedding: FloatArray) {
+        try {
+            prefs(context).edit().putString("$EMBEDDING_KEY$alarmId", encode(embedding)).apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save face for alarm $alarmId: ${e.message}")
+        }
+    }
+
     /**
      * The face enrolled for this mission on this alarm, or null if there is none.
      * Null must never be treated as a pass - there is nothing to verify against.

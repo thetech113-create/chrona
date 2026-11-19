@@ -3175,6 +3175,12 @@ class AlarmActivity : ComponentActivity() {
                         },
                         onRequestEnrollment = {
                             faceMissionStatus = "No face enrolled for this alarm."
+                        },
+                        // An old (pre-1.0.6) mission face just matched: keep the new aligned one.
+                        onTemplateUpgraded = { upgraded ->
+                            if (!isPreview) {
+                                FaceMissionSupport.saveMissionEmbedding(this@AlarmActivity, alarmId, upgraded)
+                            }
                         }
                     )
                 } else {

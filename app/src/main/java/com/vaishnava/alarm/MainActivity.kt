@@ -1317,6 +1317,17 @@ class MainActivity : BaseActivity() {
                             },
                                 onRequestEnrollment = {
                                     showFaceEnrollmentDialog = true
+                                },
+                                // An old (pre-1.0.6) face just matched: keep the new aligned one in its place.
+                                onTemplateUpgraded = { upgraded ->
+                                    val current = pendingAlarm
+                                    if (pendingEnrollment == null && current != null) {
+                                        alarmStorage.getAlarm(current.id)?.let { stored ->
+                                            alarmStorage.updateAlarm(stored.copy(enrolledFaceEmbedding = upgraded))
+                                        }
+                                        pendingAlarm = current.copy(enrolledFaceEmbedding = upgraded)
+                                        Log.d("FaceAuthFlow", "Upgraded the stored face of alarm ${current.id} to the aligned format")
+                                    }
                                 }
                             )
                         }
@@ -2400,7 +2411,12 @@ fun AlarmScreenContent(
                                     val pending = prefs.getBoolean("wakecheck_pending_${alarmToToggle.id}", false)
 
                                     if (!gateActive && !pending) {
-                                        val updatedAlarm = alarmToToggle.copy(isEnabled = isEnabled)
+                                        // The stored face, which the face check may have just upgraded.
+                                        val updatedAlarm = alarmToToggle.copy(
+                                            isEnabled = isEnabled,
+                                            enrolledFaceEmbedding = alarmStorage.getAlarm(alarmToToggle.id)?.enrolledFaceEmbedding
+                                                ?: alarmToToggle.enrolledFaceEmbedding
+                                        )
                                         alarmStorage.updateAlarm(updatedAlarm)
                                         alarmRefreshTrigger.value++
                                         if (isEnabled) {
@@ -2473,7 +2489,10 @@ fun AlarmScreenContent(
                                         requiresFaceAuth = newRequiresFaceAuth,
                                         enableSnooze = newEnableSnooze,
                                         repeatDaily = newDays?.size == 7,
-                                        timeChangeUsed = true
+                                        timeChangeUsed = true,
+                                        // The stored face, which the face check may have just upgraded.
+                                        enrolledFaceEmbedding = alarmStorage.getAlarm(alarmToEdit.id)?.enrolledFaceEmbedding
+                                            ?: alarmToEdit.enrolledFaceEmbedding
                                     )
                                     // Save the ringtone as last used when alarm is updated
                                     RingtonePreferences.saveLastRingtone(context, newRingtoneUri)

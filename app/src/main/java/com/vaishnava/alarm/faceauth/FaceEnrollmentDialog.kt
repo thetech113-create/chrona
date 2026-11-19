@@ -2,19 +2,11 @@ package com.vaishnava.alarm.faceauth
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
-import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
 import android.util.Log
-import java.io.ByteArrayOutputStream
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -38,10 +30,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetectorOptions
 
+/**
+ * Face enrollment: the random liveness challenge, then two samples each looking straight, slightly to one side and
+ * slightly to the other (see [FaceFrameProcessor]). The result is an aligned gallery template ([FaceTemplate]).
+ */
 @Composable
 fun FaceEnrollmentDialog(
     alarmId: Int,
@@ -74,16 +67,26 @@ fun FaceEnrollmentDialog(
         }
     }
 
-    val extractor = remember { FaceEmbeddingExtractor(context) }
-    val livenessDetector = remember { LivenessDetector() }
-
     var sampleCount by remember { mutableIntStateOf(0) }
-    var promptMessage by remember { mutableStateOf("Look at the camera and blink or turn slightly") }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var isProcessing by remember { mutableStateOf(false) }
-    var lastSampleTimeMs by remember { mutableLongStateOf(0L) }
+    var sampleTotal by remember { mutableIntStateOf(6) }
+    var promptMessage by remember { mutableStateOf("Look at the camera") }
 
-    val collectedSamples = remember { mutableStateListOf<FloatArray>() }
+    val processor = remember {
+        FaceFrameProcessor(context, FaceFrameProcessor.Mode.ENROLL) { event ->
+            when (event) {
+                is FaceEvent.Status -> promptMessage = event.text
+                is FaceEvent.Progress -> {
+                    sampleCount = event.done
+                    sampleTotal = event.total
+                }
+                is FaceEvent.Enrolled -> {
+                    promptMessage = "Face enrolled ✓"
+                    onEnrollmentComplete(event.template)
+                }
+                else -> Unit
+            }
+        }
+    }
 
     // bindToLifecycle() binds to the ACTIVITY's lifecycle, which stays RESUMED after this
     // dialog closes - so without an explicit unbind the camera keeps running and the device
@@ -99,7 +102,7 @@ fun FaceEnrollmentDialog(
             disposed.value = true
             runCatching { boundCameraProvider.value?.unbindAll() }
             boundCameraProvider.value = null
-            extractor.close()
+            processor.close()
         }
     }
 
@@ -161,7 +164,7 @@ fun FaceEnrollmentDialog(
                         textAlign = TextAlign.Center
                     )
 
-                    if (!extractor.isModelLoaded) {
+                    if (!processor.modelLoaded) {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF332222)),
                             modifier = Modifier.fillMaxWidth()
@@ -200,101 +203,11 @@ fun FaceEnrollmentDialog(
                                         it.setSurfaceProvider(previewView.surfaceProvider)
                                     }
 
-                                    val faceDetectorOptions = FaceDetectorOptions.Builder()
-                                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
-                                        .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-                                        .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-                                        .build()
-
-                                    val detector = FaceDetection.getClient(faceDetectorOptions)
-
                                     val imageAnalysis = ImageAnalysis.Builder()
                                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                                         .build()
-
-                                    imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(ctx)) { imageProxy ->
-                                        val mediaImage = imageProxy.image
-                                        val now = System.currentTimeMillis()
-
-                                        if (mediaImage != null && !isProcessing && sampleCount < 5 && extractor.isModelLoaded) {
-                                            val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                                            detector.process(image)
-                                                .addOnSuccessListener { faces ->
-                                                    if (faces.size > 1) {
-                                                        // Round preview frame is a visual guide only - the analyzed
-                                                        // image is the full sensor frame, so a bystander elsewhere
-                                                        // in view would otherwise be indistinguishable from faces[0].
-                                                        promptMessage = "More than one face detected. Make sure only you are in frame."
-                                                        livenessDetector.reset()
-                                                    } else if (faces.isNotEmpty()) {
-                                                        val face = faces[0]
-                                                        val position = livenessDetector.evaluateQuality(
-                                                            face,
-                                                            imageWidth = mediaImage.width,
-                                                            imageHeight = mediaImage.height
-                                                        )
-
-                                                        if (!position.faceCentered || !position.faceSizeOk) {
-                                                            promptMessage = "Center your face in the frame."
-                                                        } else {
-                                                        // Pass image dimensions for quality evaluation
-                                                        val livenessPassed = livenessDetector.processFrame(
-                                                            face,
-                                                            imageWidth = mediaImage.width,
-                                                            imageHeight = mediaImage.height
-                                                        )
-
-                                                        // Only capture samples when liveness is genuinely verified
-                                                        if (livenessPassed) {
-                                                            if (now - lastSampleTimeMs >= 500L) {
-                                                                lastSampleTimeMs = now
-                                                                val bitmap = imageProxy.toBitmap()
-                                                                val croppedFace = bitmap?.let {
-                                                                    val rotatedBitmap = rotateBitmap(it, imageProxy.imageInfo.rotationDegrees.toFloat())
-                                                                    cropFaceBitmap(rotatedBitmap, face.boundingBox)
-                                                                }
-                                                                if (bitmap == null) {
-                                                                    Log.w("FaceEnrollmentDialog", "toBitmap() returned null - frame decode failed, will retry next frame")
-                                                                }
-
-                                                                if (croppedFace != null) {
-                                                                    val embedding = extractor.extractEmbedding(croppedFace)
-                                                                    if (embedding != null) {
-                                                                        collectedSamples.add(embedding)
-                                                                        sampleCount = collectedSamples.size
-                                                                        promptMessage = "Captured sample $sampleCount/5. Hold still..."
-
-                                                                        if (sampleCount >= 5) {
-                                                                            isProcessing = true
-                                                                            promptMessage = "Processing face template..."
-                                                                            val enrolledEmbedding = FaceTemplateStore.aggregateEmbeddings(collectedSamples)
-                                                                            if (enrolledEmbedding != null) {
-                                                                                onEnrollmentComplete(enrolledEmbedding)
-                                                                            } else {
-                                                                                errorMessage = "Failed to process face template."
-                                                                                onEnrollmentComplete(null)
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        } else {
-                                                            // Provide user-friendly feedback without showing frame counts
-                                                            promptMessage = livenessDetector.getChallengePrompt()
-                                                        }
-                                                        }
-                                                    } else {
-                                                        promptMessage = "No face detected. Center your face."
-                                                    }
-                                                    imageProxy.close()
-                                                }
-                                                .addOnFailureListener {
-                                                    imageProxy.close()
-                                                }
-                                        } else {
-                                            imageProxy.close()
-                                        }
-                                    }
+                                    // Frames are worked on in the background, never on the main thread.
+                                    imageAnalysis.setAnalyzer(processor.analyzerExecutor, processor.analyzer)
 
                                     try {
                                         cameraProvider.unbindAll()
@@ -322,7 +235,7 @@ fun FaceEnrollmentDialog(
 
                     if (sampleCount > 0) {
                         LinearProgressIndicator(
-                            progress = { sampleCount / 5.0f },
+                            progress = { sampleCount / sampleTotal.toFloat() },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(8.dp)
@@ -332,15 +245,11 @@ fun FaceEnrollmentDialog(
                         )
 
                         Text(
-                            text = "Samples Collected: $sampleCount / 5",
+                            text = "Samples Collected: $sampleCount / $sampleTotal",
                             color = Color.LightGray,
                             fontSize = 14.sp
                         )
                     }
-                }
-
-                errorMessage?.let {
-                    Text(text = it, color = Color.Red, fontSize = 13.sp)
                 }
 
                 Row(
@@ -354,90 +263,4 @@ fun FaceEnrollmentDialog(
             }
         }
     }
-}
-
-private fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
-    if (degrees == 0f) return bitmap
-    val matrix = Matrix().apply { postRotate(degrees) }
-    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-}
-
-private fun cropFaceBitmap(bitmap: Bitmap, bounds: Rect): Bitmap? {
-    return try {
-        val marginX = (bounds.width() * 0.15f).toInt()
-        val marginY = (bounds.height() * 0.15f).toInt()
-
-        val left = (bounds.left - marginX).coerceIn(0, bitmap.width - 1)
-        val top = (bounds.top - marginY).coerceIn(0, bitmap.height - 1)
-        val right = (bounds.right + marginX).coerceIn(left + 1, bitmap.width)
-        val bottom = (bounds.bottom + marginY).coerceIn(top + 1, bitmap.height)
-
-        val width = right - left
-        val height = bottom - top
-
-        if (width > 20 && height > 20) {
-            Bitmap.createBitmap(bitmap, left, top, width, height)
-        } else {
-            null
-        }
-    } catch (_: Exception) {
-        null
-    }
-}
-
-// ImageAnalysis delivers YUV_420_888 frames (no JPEG plane), so planes[0] is raw
-// luma data, not a decodable image. Convert YUV -> NV21 -> JPEG -> Bitmap properly.
-// Never lets an exception escape: setAnalyzer's caller only calls imageProxy.close()
-// after this returns, so a thrown exception here would leak the proxy and stall the
-// camera (STRATEGY_KEEP_ONLY_LATEST waits for the previous frame to close).
-private fun ImageProxy.toBitmap(): Bitmap? = try {
-    toBitmapOrThrow()
-} catch (e: Exception) {
-    Log.w("FaceEnrollmentDialog", "toBitmap() failed: ${e.message}")
-    null
-}
-
-private fun ImageProxy.toBitmapOrThrow(): Bitmap? {
-    if (format != ImageFormat.YUV_420_888 || planes.size < 3) {
-        val planeProxy = planes[0]
-        val buffer = planeProxy.buffer
-        val bytes = ByteArray(buffer.remaining())
-        buffer.get(bytes)
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-    }
-
-    val yPlane = planes[0]
-    val uPlane = planes[1]
-    val vPlane = planes[2]
-
-    val nv21 = ByteArray(width * height * 3 / 2)
-
-    var pos = 0
-    val yBuffer = yPlane.buffer
-    val yRowStride = yPlane.rowStride
-    for (row in 0 until height) {
-        yBuffer.position(row * yRowStride)
-        yBuffer.get(nv21, pos, width)
-        pos += width
-    }
-
-    val uvRowStride = vPlane.rowStride
-    val uvPixelStride = vPlane.pixelStride
-    val uBuffer = uPlane.buffer
-    val vBuffer = vPlane.buffer
-    val chromaHeight = height / 2
-    val chromaWidth = width / 2
-    for (row in 0 until chromaHeight) {
-        for (col in 0 until chromaWidth) {
-            val index = row * uvRowStride + col * uvPixelStride
-            nv21[pos++] = vBuffer.get(index)
-            nv21[pos++] = uBuffer.get(index)
-        }
-    }
-
-    val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-    val out = ByteArrayOutputStream()
-    yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
-    val jpegBytes = out.toByteArray()
-    return BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
 }

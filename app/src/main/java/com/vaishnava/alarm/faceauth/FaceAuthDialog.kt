@@ -3,19 +3,11 @@ package com.vaishnava.alarm.faceauth
 import android.Manifest
 import com.vaishnava.alarm.data.Alarm
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
-import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
 import android.util.Log
-import java.io.ByteArrayOutputStream
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -39,10 +31,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetectorOptions
 
+/**
+ * Face check with the front camera (see [FaceFrameProcessor] for the steps). [onTemplateUpgraded] receives the new
+ * aligned face when an old (pre-1.0.6) stored face was matched, so the caller can store it in its place.
+ */
 @Composable
 fun FaceAuthDialog(
     action: MatchAction,
@@ -50,7 +43,8 @@ fun FaceAuthDialog(
     alarm: Alarm?,
     onDismiss: () -> Unit,
     onVerificationSuccess: () -> Unit,
-    onRequestEnrollment: () -> Unit
+    onRequestEnrollment: () -> Unit,
+    onTemplateUpgraded: (FloatArray) -> Unit = {}
 ) {
     Log.d("FaceAuthFlow", "🎬 FaceAuthDialog composed: action=$action, alarmId=$alarmId")
     val context = LocalContext.current
@@ -93,19 +87,9 @@ fun FaceAuthDialog(
         }
     }
 
-    val extractor = remember { FaceEmbeddingExtractor(context) }
-    val livenessDetector = remember { LivenessDetector() }
     val enrolledEmbedding = remember { alarm?.enrolledFaceEmbedding }
 
     var statusMessage by remember { mutableStateOf("Verifying identity...") }
-    var resultText by remember { mutableStateOf<String?>(null) }
-    var isProcessing by remember { mutableStateOf(false) }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            extractor.close()
-        }
-    }
 
     if (enrolledEmbedding == null) {
         AlertDialog(
@@ -127,6 +111,24 @@ fun FaceAuthDialog(
             }
         )
         return
+    }
+
+    val processor = remember {
+        FaceFrameProcessor(context, FaceFrameProcessor.Mode.VERIFY, enrolledEmbedding, action) { event ->
+            when (event) {
+                is FaceEvent.Status -> statusMessage = event.text
+                is FaceEvent.Verified -> {
+                    statusMessage = "Face verified ✓"
+                    Log.d("FaceAuthFlow", "ALLOWED score=${event.score} upgraded=${event.upgradedTemplate != null}")
+                    event.upgradedTemplate?.let(onTemplateUpgraded)
+                    onVerificationSuccess()
+                }
+                else -> Unit
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { processor.close() }
     }
 
     Dialog(
@@ -213,116 +215,11 @@ fun FaceAuthDialog(
                                         it.setSurfaceProvider(previewView.surfaceProvider)
                                     }
 
-                                    val faceDetectorOptions = FaceDetectorOptions.Builder()
-                                        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
-                                        .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-                                        .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-                                        .build()
-
-                                    val detector = FaceDetection.getClient(faceDetectorOptions)
-
                                     val imageAnalysis = ImageAnalysis.Builder()
                                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                                         .build()
-
-                                    imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(ctx)) { imageProxy ->
-                                        val mediaImage = imageProxy.image
-                                        if (mediaImage != null && !isProcessing && extractor.isModelLoaded) {
-                                            val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                                            detector.process(image)
-                                                .addOnSuccessListener { faces ->
-                                                    if (faces.size > 1) {
-                                                        // Round preview frame is a visual guide only - the analyzed
-                                                        // image is the full sensor frame, so a bystander elsewhere
-                                                        // in view would otherwise be indistinguishable from faces[0].
-                                                        statusMessage = "More than one face detected. Make sure only you are in frame."
-                                                        livenessDetector.reset()
-                                                    } else if (faces.isNotEmpty()) {
-                                                        val face = faces[0]
-                                                        val position = livenessDetector.evaluateQuality(
-                                                            face,
-                                                            imageWidth = mediaImage.width,
-                                                            imageHeight = mediaImage.height
-                                                        )
-
-                                                        if (!position.faceCentered || !position.faceSizeOk) {
-                                                            statusMessage = "Center your face in the frame."
-                                                        } else {
-                                                        // Pass image dimensions for quality evaluation
-                                                        val livenessPassed = livenessDetector.processFrame(
-                                                            face,
-                                                            imageWidth = mediaImage.width,
-                                                            imageHeight = mediaImage.height
-                                                        )
-                                                        statusMessage = livenessDetector.getChallengePrompt()
-
-                                                        if (livenessPassed && !isProcessing) {
-                                                            val bitmap = imageProxy.toBitmap()
-                                                            val croppedFace = bitmap?.let {
-                                                                val rotatedBitmap = rotateBitmap(it, imageProxy.imageInfo.rotationDegrees.toFloat())
-                                                                cropFaceBitmap(rotatedBitmap, face.boundingBox)
-                                                            }
-                                                            if (bitmap == null) {
-                                                                Log.w("FaceAuthFlow", "toBitmap() returned null - frame decode failed, will retry next frame")
-                                                            }
-
-                                                            if (croppedFace != null) {
-                                                                val capturedEmbedding = extractor.extractEmbedding(croppedFace)
-                                                                if (capturedEmbedding == null) {
-                                                                    Log.w("FaceAuthFlow", "extractEmbedding returned null (model/crop issue) - will retry next frame")
-                                                                }
-                                                                val verification = FaceMatcher.verify(
-                                                                    enrolledEmbedding = enrolledEmbedding,
-                                                                    capturedEmbedding = capturedEmbedding,
-                                                                    livenessPassed = true,
-                                                                    action = action
-                                                                )
-
-                                                                Log.d(
-                                                                    "FaceAuthFlow",
-                                                                    "VERIFY_RESULT decision=${verification.decision} " +
-                                                                        "score=${verification.similarityScore} action=$action " +
-                                                                        "capturedEmbSize=${capturedEmbedding?.size} " +
-                                                                        "enrolledEmbSize=${enrolledEmbedding.size} " +
-                                                                        "isProcessingBefore=$isProcessing"
-                                                                )
-
-                                                                resultText = verification.message
-                                                                when (verification.decision) {
-                                                                    MatchDecision.ALLOWED -> {
-                                                                        isProcessing = true
-                                                                        Log.d("FaceAuthFlow", "ALLOWED -> isProcessing=true, calling onVerificationSuccess()")
-                                                                        onVerificationSuccess()
-                                                                    }
-                                                                    MatchDecision.UNCERTAIN -> {
-                                                                        livenessDetector.reset()
-                                                                        Log.d("FaceAuthFlow", "UNCERTAIN -> livenessDetector.reset() called, isProcessing=$isProcessing")
-                                                                    }
-                                                                    MatchDecision.DENIED, MatchDecision.SPOOF_DENIED -> {
-                                                                        // Reset liveness detector to allow retry
-                                                                        livenessDetector.reset()
-                                                                        Log.d("FaceAuthFlow", "${verification.decision} -> livenessDetector.reset() called, isProcessing=$isProcessing (should stay false)")
-                                                                        // Do NOT set isProcessing=true; let user try again
-                                                                    }
-                                                                    else -> {
-                                                                        Log.w("FaceAuthFlow", "UNHANDLED decision=${verification.decision} - no reset, no isProcessing change")
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        }
-                                                    } else {
-                                                        statusMessage = "No face detected. Center your face."
-                                                    }
-                                                    imageProxy.close()
-                                                }
-                                                .addOnFailureListener {
-                                                    imageProxy.close()
-                                                }
-                                        } else {
-                                            imageProxy.close()
-                                        }
-                                    }
+                                    // Frames are worked on in the background, never on the main thread.
+                                    imageAnalysis.setAnalyzer(processor.analyzerExecutor, processor.analyzer)
 
                                     try {
                                         cameraProvider.unbindAll()
@@ -349,15 +246,6 @@ fun FaceAuthDialog(
                     }
                 }
 
-                resultText?.let {
-                    Text(
-                        text = it,
-                        color = Color.Yellow,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center
-                    )
-                }
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
@@ -369,95 +257,4 @@ fun FaceAuthDialog(
             }
         }
     }
-}
-
-private fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
-    if (degrees == 0f) return bitmap
-    val matrix = Matrix().apply { postRotate(degrees) }
-    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-}
-
-private fun cropFaceBitmap(bitmap: Bitmap, bounds: Rect): Bitmap? {
-    return try {
-        val marginX = (bounds.width() * 0.15f).toInt()
-        val marginY = (bounds.height() * 0.15f).toInt()
-
-        val left = (bounds.left - marginX).coerceIn(0, bitmap.width - 1)
-        val top = (bounds.top - marginY).coerceIn(0, bitmap.height - 1)
-        val right = (bounds.right + marginX).coerceIn(left + 1, bitmap.width)
-        val bottom = (bounds.bottom + marginY).coerceIn(top + 1, bitmap.height)
-
-        val width = right - left
-        val height = bottom - top
-
-        if (width > 20 && height > 20) {
-            Bitmap.createBitmap(bitmap, left, top, width, height)
-        } else {
-            null
-        }
-    } catch (_: Exception) {
-        null
-    }
-}
-
-// ImageAnalysis delivers YUV_420_888 frames (no JPEG plane), so planes[0] is raw
-// luma data, not a decodable image - decodeByteArray on it returns null. That null
-// silently propagates as a "non-null" Bitmap (Kotlin trusts the Java platform type),
-// causing a later NPE inside cropFaceBitmap's try/catch, which swallows it and returns
-// null - so verification never runs, but the exception happens *after* imageProxy has
-// already been read, so it doesn't explain a stuck camera. What it does mean is capture
-// silently fails for everyone. Convert YUV -> NV21 -> JPEG -> Bitmap properly instead.
-// Never lets an exception escape: setAnalyzer's caller only calls imageProxy.close()
-// after this returns, so a thrown exception here would leak the proxy and stall the
-// camera (STRATEGY_KEEP_ONLY_LATEST waits for the previous frame to close).
-private fun ImageProxy.toBitmap(): Bitmap? = try {
-    toBitmapOrThrow()
-} catch (e: Exception) {
-    Log.w("FaceAuthFlow", "toBitmap() failed: ${e.message}")
-    null
-}
-
-private fun ImageProxy.toBitmapOrThrow(): Bitmap? {
-    if (format != ImageFormat.YUV_420_888 || planes.size < 3) {
-        val planeProxy = planes[0]
-        val buffer = planeProxy.buffer
-        val bytes = ByteArray(buffer.remaining())
-        buffer.get(bytes)
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-    }
-
-    val yPlane = planes[0]
-    val uPlane = planes[1]
-    val vPlane = planes[2]
-
-    val nv21 = ByteArray(width * height * 3 / 2)
-
-    var pos = 0
-    val yBuffer = yPlane.buffer
-    val yRowStride = yPlane.rowStride
-    for (row in 0 until height) {
-        yBuffer.position(row * yRowStride)
-        yBuffer.get(nv21, pos, width)
-        pos += width
-    }
-
-    val uvRowStride = vPlane.rowStride
-    val uvPixelStride = vPlane.pixelStride
-    val uBuffer = uPlane.buffer
-    val vBuffer = vPlane.buffer
-    val chromaHeight = height / 2
-    val chromaWidth = width / 2
-    for (row in 0 until chromaHeight) {
-        for (col in 0 until chromaWidth) {
-            val index = row * uvRowStride + col * uvPixelStride
-            nv21[pos++] = vBuffer.get(index)
-            nv21[pos++] = uBuffer.get(index)
-        }
-    }
-
-    val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-    val out = ByteArrayOutputStream()
-    yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
-    val jpegBytes = out.toByteArray()
-    return BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
 }
