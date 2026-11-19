@@ -3879,7 +3879,17 @@ fun AddAlarmDialog(
     LaunchedEffect(displayHour, isPm.value) { syncHourInput() }
     LaunchedEffect(timeMinute.value) { syncMinuteInput() }
 
-    val performSaveAction: () -> Unit = {
+    val performSaveAction: () -> Unit = save@{
+        // Silence No Sound only for a one-time test alarm within 10 minutes (SilenceRingtoneRule.kt).
+        val silenceChosen = isSilenceRingtone(selectedRingtoneUriState.value?.toString(), R.raw.silence_no_sound)
+        if (!silenceRingtoneAllowed(
+                silenceChosen, timeHour.value, timeMinute.value, selectedDaysState.value,
+                selectedDatesState.value, isShiftRotation.value, System.currentTimeMillis()
+            )
+        ) {
+            Toast.makeText(context, SILENCE_NOT_ALLOWED_MESSAGE, Toast.LENGTH_LONG).show()
+            return@save
+        }
         if (isShiftRotation.value) {
             // 1. Determine mission type and password from selections
             val missionType: String?
