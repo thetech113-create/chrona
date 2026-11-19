@@ -82,6 +82,10 @@ object RemoteLogUploader {
         prefs(context).edit().putString(KEY_TOKEN, token.trim()).apply()
     }
 
+    fun removeToken(context: Context) {
+        prefs(context).edit().remove(KEY_TOKEN).apply()
+    }
+
     fun lastStatus(context: Context): String =
         _status.value.ifEmpty { if (isUnlocked(context)) prefs(context).getString(KEY_STATUS, "").orEmpty() else "" }
 

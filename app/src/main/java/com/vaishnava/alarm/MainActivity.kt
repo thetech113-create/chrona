@@ -6638,7 +6638,10 @@ fun DeviceForensicsDialog(
                     }
                 }
                 ForensicSection("Remote Logs") {
-                    var tokenInput by remember { mutableStateOf(RemoteLogUploader.token(context)) }
+                    // A saved token is never shown again, not even as dots: only that one is saved.
+                    var hasToken by remember { mutableStateOf(RemoteLogUploader.token(context).isNotBlank()) }
+                    var editingToken by remember { mutableStateOf(!hasToken) }
+                    var tokenInput by remember { mutableStateOf("") }
                     val savedStatus = remember { RemoteLogUploader.lastStatus(context) }
                     val uploadStatus by RemoteLogUploader.status.collectAsState()
                     Text(
@@ -6646,29 +6649,69 @@ fun DeviceForensicsDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    OutlinedTextField(
-                        value = tokenInput,
-                        onValueChange = { tokenInput = it },
-                        label = { Text("GitHub token") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    if (editingToken) {
+                        OutlinedTextField(
+                            value = tokenInput,
+                            onValueChange = { tokenInput = it },
+                            label = { Text(if (hasToken) "New GitHub token" else "GitHub token") },
+                            // Wraps instead of cutting the dots off with an ellipsis.
+                            singleLine = false,
+                            maxLines = 4,
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    RemoteLogUploader.saveToken(context, tokenInput)
+                                    tokenInput = ""
+                                    hasToken = true
+                                    editingToken = false
+                                },
+                                enabled = tokenInput.isNotBlank(),
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Save Token") }
+                            if (hasToken) {
+                                OutlinedButton(
+                                    onClick = {
+                                        tokenInput = ""
+                                        editingToken = false
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Cancel") }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "GitHub token saved ✓",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { editingToken = true },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Change") }
+                            OutlinedButton(
+                                onClick = {
+                                    RemoteLogUploader.removeToken(context)
+                                    hasToken = false
+                                    editingToken = true
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Remove") }
+                        }
                         Button(
-                            onClick = {
-                                RemoteLogUploader.saveToken(context, tokenInput)
-                                Toast.makeText(context, "Token saved", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("Save Token") }
-                        OutlinedButton(
                             onClick = { RemoteLogUploader.uploadSoon(context, "manual") },
-                            enabled = tokenInput.isNotBlank(),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.fillMaxWidth()
                         ) { Text("Upload Now") }
                     }
                     uploadStatus.ifEmpty { savedStatus }.takeIf { it.isNotEmpty() }?.let {
