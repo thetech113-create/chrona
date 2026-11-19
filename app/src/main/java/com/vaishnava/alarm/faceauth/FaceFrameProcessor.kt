@@ -32,7 +32,7 @@ sealed class FaceEvent {
  * One camera frame at a time, on its own background thread (detection and the face model used to run on the main
  * thread and made the preview lag):
  *  1. ML Kit finds exactly one face, near the middle.
- *  2. The random liveness challenge ([LivenessDetector]).
+ *  2. VERIFY only: the random liveness challenge ([LivenessDetector]). Enrollment's own poses prove a live head.
  *  3. Only frontal, sharp, well-lit frames with eyes open are used ([FaceQuality]); each is aligned on its 5
  *     landmarks ([FaceAlignment]) before MobileFaceNet turns it into an embedding.
  *  4. VERIFY: several frames are scored against the stored face and decided together ([FaceMatcher.decide]).
@@ -145,9 +145,11 @@ class FaceFrameProcessor(
         val position = liveness.evaluateQuality(face, uprightWidth, uprightHeight)
         if (!position.faceCentered || !position.faceSizeOk) return status("Center your face in the frame.")
 
-        if (!liveness.isPassed) {
+        // Enrollment has no separate challenge: its poses (straight, one side, the other side) already prove a live,
+        // moving head, and a second proof made adding an alarm feel like an extra verification (user, 1.0.9).
+        if (mode == Mode.VERIFY && !liveness.isPassed) {
             liveness.processFrame(face)
-            return status(liveness.prompt() ?: firstCapturePrompt())
+            return status(liveness.prompt() ?: "Look straight at the camera.")
         }
 
         when (mode) {
@@ -155,8 +157,6 @@ class FaceFrameProcessor(
             Mode.ENROLL -> enrollFrame(proxy, rotation, face)
         }
     }
-
-    private fun firstCapturePrompt() = if (mode == Mode.VERIFY) "Look straight at the camera." else "Look straight at the camera and hold still."
 
     private fun verifyFrame(proxy: ImageProxy, rotation: Int, face: Face) {
         FaceQuality.poseProblem(face.headEulerAngleY, face.headEulerAngleX, face.headEulerAngleZ,

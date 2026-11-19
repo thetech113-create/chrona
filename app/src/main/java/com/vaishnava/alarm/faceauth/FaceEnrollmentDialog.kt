@@ -32,7 +32,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 
 /**
- * Face enrollment: the random liveness challenge, then two samples each looking straight, slightly to one side and
+ * Face enrollment (no separate liveness challenge: the poses prove a live head): two samples each looking straight, slightly to one side and
  * slightly to the other (see [FaceFrameProcessor]). The result is an aligned gallery template ([FaceTemplate]).
  */
 @Composable
