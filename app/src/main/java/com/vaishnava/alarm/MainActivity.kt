@@ -3880,15 +3880,18 @@ fun AddAlarmDialog(
     LaunchedEffect(timeMinute.value) { syncMinuteInput() }
 
     // A dialog, not a toast: Android 12+ cuts a toast off after two lines, and this text must show in full.
+    // It closes by itself after 4 seconds (no OK needed); a tap outside closes it sooner.
     val showSilenceRefused = remember { mutableStateOf(false) }
     if (showSilenceRefused.value) {
+        LaunchedEffect(Unit) {
+            delay(4_000L)
+            showSilenceRefused.value = false
+        }
         AlertDialog(
             onDismissRequest = { showSilenceRefused.value = false },
             title = { Text("Silence not allowed") },
             text = { Text(SILENCE_NOT_ALLOWED_MESSAGE) },
-            confirmButton = {
-                TextButton(onClick = { showSilenceRefused.value = false }) { Text("OK") }
-            }
+            confirmButton = {}
         )
     }
 
