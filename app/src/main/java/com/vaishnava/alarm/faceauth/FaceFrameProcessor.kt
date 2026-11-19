@@ -66,6 +66,14 @@ class FaceFrameProcessor(
     }
     private val main = Handler(Looper.getMainLooper())
     private val extractor = FaceEmbeddingExtractor(appContext)
+
+    // The manifest removes ML Kit's auto-init provider (lazy startup), so ML Kit must be initialized before the
+    // detector below is created; without it getClient() throws and the app closes when a face screen opens (1.0.6).
+    // A second call when it is already initialized throws too, hence runCatching.
+    init {
+        runCatching { com.google.mlkit.common.MlKit.initialize(appContext) }
+    }
+
     private val detector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
