@@ -2374,8 +2374,16 @@ fun AlarmScreenContent(
                                 val deleteAction = {
                                     alarmScheduler.cancel(alarmToRemove)
                                     val deleted = alarmStorage.deleteAlarm(alarmToRemove.id)
-                                    if (deleted) {
-                                        alarms.remove(alarmToRemove)
+                                    // Show exactly what storage holds now. The tapped card can be an older copy (the
+                                    // list can reload while the face check is open, and a copy with a face embedding
+                                    // never equals the reloaded one), so removing that copy could leave a deleted
+                                    // alarm on screen.
+                                    alarms.clear()
+                                    alarms.addAll(alarmStorage.getAlarms())
+                                    if (alarms.none { it.id == alarmToRemove.id }) {
+                                        if (!deleted) {
+                                            Log.w("DeleteFlow", "DELETE_ALREADY_GONE: alarmId=${alarmToRemove.id} was no longer in storage, card removed")
+                                        }
 
                                         // CRITICAL FIX: Cancel all possible notifications when alarm is deleted
                                         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
